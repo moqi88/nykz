@@ -1,0 +1,140 @@
+#!/usr/bin/env python
+# encoding: utf-8
+
+VERSION='0.0.1'
+APPNAME='sjtubbs'
+
+srcdir = '.'
+blddir = 'build'
+
+from Configure import conf
+from TaskGen import taskgen, after, before, feature
+import Task
+import os, os.path
+
+
+
+def check_cc_flags(self, flags, mandatory=0):
+    if self.check_cc(cflags=flags, \
+        msg='Checking for if cc accept %s'%(flags,),
+        mandatory=mandatory):
+        self.env.append_unique('CCFLAGS', flags)
+conf(check_cc_flags)
+
+
+def check_cxx_flags(self, flags, mandatory=0):
+    if self.check_cxx(cflags=flags, \
+        msg='Checking for if cxx accept %s'%(flags,),
+        mandatory=mandatory):
+        self.env.append_unique('CXXFLAGS', flags)
+conf(check_cxx_flags)
+
+import Options
+
+def set_options(opt):
+    opt.tool_options('compiler_cc')
+    opt.tool_options('compiler_cxx')
+    bopt = opt.add_option_group('BBS Options')
+    bopt.add_option('--bbshome', default='/home/bbs/bbshome',
+        help='Set bbshome directory, default: /home/bbs/bbshome',
+        dest='bbshome')
+
+def configure(conf):
+    app = conf.env.append_value
+    conf.check_tool('compiler_cc')
+    conf.check_tool('compiler_cxx')
+    conf.check_cc_flags('-O2')
+    conf.check_cxx_flags('-O2')
+    conf.check_cc_flags('-g')
+    conf.check_cxx_flags('-g')
+    conf.check_cc_flags('-Wall')
+    conf.check_cxx_flags('-Wall')
+    conf.check_cc_flags('-Wextra')
+    conf.check_cxx_flags('-Wextra')
+    conf.check_cc_flags('-pipe')
+    conf.check_cxx_flags('-pipe')
+    conf.check_cc_flags('-Wno-unused-parameter')
+    conf.check_cxx_flags('-Wno-unused-parameter')
+    conf.check_cc_flags('-fno-strict-aliasing')
+    if conf.check_cxx(linkflags='-Wl,--fatal-warnings'):
+        app('LINKFLAGS', '-Wl,--fatal-warnings')
+    app('CPPPATH', '%s/../fb2k/include'%conf.srcdir )
+    conf.check_cc(header_name='bbs.h',  mandatory=1 )
+    conf.check_cc(header_name='fcgiapp.h', lib='fcgi', mandatory=1, uselib_store='FCGI',)
+    conf.check_cxx(header_name='google/template.h',lib='ctemplate_nothreads', mandatory=1, uselib_store='CTPL' )
+    conf.find_program('make_tpl_varnames_h', mandatory=1)
+    conf.check_cfg(atleast_pkgconfig_version='0.0.0', mandatory=1)
+    conf.check_cfg(package='glib-2.0', args='--libs --cflags', uselib_store='GLIB', mandatory=1)
+    conf.check_cfg(package='gmodule-2.0', args='--libs --cflags', uselib_store='GMOD', mandatory=1)
+
+    conf.env['BBSHOME'] = os.path.abspath(os.path.expanduser(Options.options.bbshome))
+
+
+
+def build(bld):
+    __init_build()
+    bld.new_task_gen(
+        features='cc cxx cprogram glogdomain',
+        source=bld.path.ant_glob('*.(cc|c)'),
+        includes='. tpl',
+        defines='FWEB_CONF_PATH="%s/fweb.ini"'%bld.env['PREFIX'],
+        target='fweb2',
+        uselib='FCGI CTPL GLIB GMOD',
+        install_path='${BBSHOME}/httpd/'
+    )
+    bld.install_as('${BBSHOME}/httpd/fweb.ini.default', 'fweb.ini')
+    bld.add_subdirs('tpl')
+    bld.add_subdirs('modules bbswww ntwww')
+
+def __init_build():
+    def gld_replace_cc_cxx_task(self):
+        if 'cc' not in self.features and \
+            'cxx' not in self.features:
+            raise Utils.WafError('Have you forgotten to set the feature "cc" or "cxx" on %s?' % str(self))
+        
+        if 'cc' in self.features:
+            cctaskcls = Task.TaskBase.classes['cc']
+
+            class GldccTask(cctaskcls):
+                def run(self):
+                    self.env = self.env.copy()
+                    self.env.append_unique('_CCDEFFLAGS', 
+                        self.env['CCDEFINES_ST'] % 'G_LOG_DOMAIN="'+self.inputs[0].nice_path(self.env)+'"')
+                    cctaskcls.run(self)
+
+                def __str__(self):
+                    name = self.__class__.__name__ = 'cc'
+                    str = cctaskcls.__str__(self)
+                    self.__class__.__name__ = name
+                    return str
+            Task.TaskBase.classes['cc'] = GldccTask
+            self.gld_old_cctaskcls = cctaskcls
+
+        if 'cxx' in self.features:
+            cxxtaskcls = Task.TaskBase.classes['cxx']
+
+            class GldcxxTask(cxxtaskcls):
+                def run(self):
+                    self.env = self.env.copy()
+                    self.env.append_unique('_CXXDEFFLAGS', 
+                        self.env['CXXDEFINES_ST'] % 'G_LOG_DOMAIN="'+self.inputs[0].nice_path(self.env)+'"')
+                    cxxtaskcls.run(self)
+
+                def __str__(self):
+                    name = self.__class__.__name__ = 'cxx'
+                    str = cxxtaskcls.__str__(self)
+                    self.__class__.__name__ = name
+                    return str
+            Task.TaskBase.classes['cxx'] = GldcxxTask
+            self.gld_old_cxxtaskcls = cxxtaskcls
+
+    taskgen( feature('glogdomain')( before('apply_core')(gld_replace_cc_cxx_task)))
+
+    def gld_restore_cc_cxx_task(self):
+        if 'cc' in self.features:
+            Task.TaskBase.classes['cc'] = self.gld_old_cctaskcls
+        if 'cxx' in self.features:
+            Task.TaskBase.classes['cxx'] = self.gld_old_cxxtaskcls
+
+
+    taskgen( feature('glogdomain')( after('apply_core')(gld_restore_cc_cxx_task)))

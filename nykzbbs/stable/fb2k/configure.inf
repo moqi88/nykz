@@ -1,0 +1,10 @@
+######################################################
+This file is generate by configure $Revision: 1.2 $
+######################################################
+PERL=/usr/bin/perl
+BBS_ID=NYKZBBS
+DOMAIN=bbs.nykz.net
+CNAME=ÄÏÑó¿ÍÕ»BBS
+DEFAULTBD=sysop
+BUILD_PLATFORM=linux
+LIBCRYPT=DES
